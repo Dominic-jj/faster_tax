@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -E '\\\\.\\(cursorrules|rules|copilot-instructions|settings|config|env|ini|cfg\\)$')",
+      "mcp__zai-mcp-server__extract_text_from_screenshot",
+      "Bash(python -c \"import openpyxl; print\\(''openpyxl version:'', openpyxl.__version__\\)\")",
+      "Bash(python -c \":*)",
+      "mcp__zai-mcp-server__analyze_image",
+      "Bash(pip install:*)",
+      "Bash(python -c \"import easyocr; print\\(easyocr.__version__\\)\")",
+      "Bash(python -m pip install easyocr)"
+    ],
+    "defaultMode": "bypassPermissions",
+    "additionalDirectories": [
+      "C:\\Users\\JUN\\Desktop\\fapiao\\template"
+    ]
+  }
+}
