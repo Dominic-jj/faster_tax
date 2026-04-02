@@ -9,13 +9,21 @@ import os
 import re
 import openpyxl
 
+# 项目根目录
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_DEFAULT_TAX_LIST = os.path.join(_PROJECT_ROOT, 'data', 'tax_list.xlsx')
+_DEFAULT_TRAIN_DIR = os.path.join(_PROJECT_ROOT, 'data', 'train_data')
+
 
 class TaxMatcher:
     """税收分类匹配器"""
 
-    def __init__(self, tax_list_path: str = 'tax_list.xlsx'):
+    def __init__(self, tax_list_path: str = _DEFAULT_TAX_LIST,
+                 train_dir: str = _DEFAULT_TRAIN_DIR):
         self.entries: list[dict] = []
+        self.train_map: dict[str, str] = {}  # 物品名 → 税收编码
         self._load(tax_list_path)
+        self._load_train(train_dir)
 
     def _load(self, path: str):
         """加载税收分类表"""
@@ -47,6 +55,34 @@ class TaxMatcher:
             })
 
         wb.close()
+
+        # 排序后标记叶子节点（具体商品编码，非汇总分类）
+        self.entries.sort(key=lambda e: e['code'])
+        for i, entry in enumerate(self.entries):
+            code = entry['code']
+            is_leaf = True
+            if i + 1 < len(self.entries):
+                nxt = self.entries[i + 1]['code']
+                if nxt.startswith(code) and nxt != code:
+                    is_leaf = False
+            entry['is_leaf'] = is_leaf
+
+    def _load_train(self, train_dir: str):
+        """加载训练数据（手动确认过的物品→编码映射），作为优先匹配"""
+        if not os.path.isdir(train_dir):
+            return
+        import glob
+        for fpath in sorted(glob.glob(os.path.join(train_dir, '*.xlsx'))):
+            wb = openpyxl.load_workbook(fpath, read_only=True, data_only=True)
+            ws = wb.active
+            for row in ws.iter_rows(min_row=4, max_row=ws.max_row, values_only=True):
+                if len(row) < 2:
+                    continue
+                name = row[0]
+                code = row[1]
+                if name and code:
+                    self.train_map[str(name).strip()] = str(code).strip()
+            wb.close()
 
     def _extract_keywords(self, text: str) -> list[str]:
         """
@@ -82,11 +118,24 @@ class TaxMatcher:
         为物品匹配税收分类编码。
 
         匹配策略：
-        1. 完整物品名在分类名称中出现 → 最高优先级
-        2. 完整物品名在说明中出现 → 次高优先级
+        0. 训练数据精确匹配 → 最高优先级（手动确认过的）
+        1. 完整物品名在分类名称中出现 → 次高优先级
+        2. 完整物品名在说明中出现 → 再次优先级
         3. 多个关键词在同一分类中匹配 → 加分
         4. 必须至少有一个关键词匹配分类名称（非说明）
         """
+        # 优先匹配训练数据
+        if item_name in self.train_map:
+            train_code = self.train_map[item_name]
+            for entry in self.entries:
+                try:
+                    if str(int(float(entry['code']))) == train_code:
+                        return train_code, entry['name']
+                except (ValueError, OverflowError):
+                    if entry['code'] == train_code:
+                        return train_code, entry['name']
+            return train_code, ''
+
         keywords = self._extract_keywords(item_name)
 
         if not keywords:
@@ -117,8 +166,10 @@ class TaxMatcher:
                 matched_keywords = len(keywords)
 
             if item_name in desc:
-                score += len(item_name) * 5
+                score += len(item_name) * 8
                 matched_keywords = max(matched_keywords, 1)
+
+            has_desc_match = False
 
             # 逐个关键词匹配
             for kw in keywords:
@@ -139,19 +190,26 @@ class TaxMatcher:
                     has_name_match = True
                     matched_keywords += 1
                 elif kw in desc:
-                    score += weight * 0.3
+                    score += weight * 0.6
+                    has_desc_match = True
+                    matched_keywords += 1
 
-            # 必须至少有一个关键词命中分类名称
-            if not has_name_match and score <= len(item_name) * 5:
-                # 只有 desc 匹配而没有 name 匹配，降低权重
-                score *= 0.3
+            # 名称匹配优先；说明匹配次之但不大幅惩罚
+            if not has_name_match and not has_desc_match:
+                score = 0
+            elif not has_name_match:
+                score *= 0.6
 
             # 多关键词同时匹配加分（说明语义一致性高）
             if matched_keywords >= 2:
                 score *= 1.5
 
-            # 优先叶子节点（轻微加分）
+            # 优先叶子节点（具体商品编码，非汇总分类）
             if score > 0:
+                if entry.get('is_leaf', True):
+                    score += 8          # 强偏好叶子节点
+                else:
+                    score -= 10         # 惩罚汇总/父级分类
                 # 优先商品编码（1开头）而非服务编码
                 if code.startswith('109'):      # 机电设备
                     score += 3
@@ -159,7 +217,7 @@ class TaxMatcher:
                     score += 2
                 elif code.startswith('1'):      # 其他商品
                     score += 2
-                # 短名称优先（更通用的分类更可能是正确匹配）
+                # 短名称轻微优先
                 score -= len(ename) * 0.05
 
             if score > best_score:
@@ -192,7 +250,7 @@ if __name__ == '__main__':
     matcher = TaxMatcher()
 
     test_names = [
-        '折産',
+        '插座',
         '插座',
         '空气开关',
         '平板灯',

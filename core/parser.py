@@ -59,10 +59,12 @@ def extract_spec(name: str) -> tuple[str, str]:
 def parse_text_line(line: str) -> Item | None:
     """
     解析单行文本，尝试提取物品信息。
-    行格式通常是：物品名 + 数量 + 单价 + 总价
+    行格式通常是：物品名 + 数量 + 单价[ + 总价]
+    如果只提供数量和单价，总价自动计算。
 
     Examples:
-        "16A 折産 4 15 60"
+        "插座 4 15"          → 总价自动算 60
+        "16A 插座 4 15 60"   → 使用填写的总价 60
         "公牛有线 14座 4 38 152"
         "2P 324空气开关 3 30 90"
     """
@@ -73,26 +75,22 @@ def parse_text_line(line: str) -> Item | None:
     # 提取所有数字（整数或小数）
     numbers = re.findall(r'\d+\.?\d*', line)
 
-    # 至少需要 3 个数字（数量、单价、总价）
-    if len(numbers) < 3:
+    if len(numbers) < 2:
         return None
 
-    # 尝试不同的数字分配策略
-    # 最后三个数字分别是：数量、单价、总价
     try:
-        qty = float(numbers[-3])
-        price = float(numbers[-2])
-        total = float(numbers[-1])
+        if len(numbers) == 2:
+            # 只有数量、单价 → 总价自动计算
+            qty = float(numbers[-2])
+            price = float(numbers[-1])
+            total = qty * price
+        else:
+            # 最后三个数字：数量、单价、总价
+            qty = float(numbers[-3])
+            price = float(numbers[-2])
+            total = float(numbers[-1])
     except (ValueError, IndexError):
         return None
-
-    # 验证：总价 ≈ 数量 × 单价（允许一定误差，手写可能有笔误）
-    if qty > 0 and price > 0:
-        expected = qty * price
-        if abs(expected - total) > max(expected * 0.2, 5):  # 20%误差或5元
-            # 尝试其他分配：最后两个数字是单价和总价，倒数第三个不是数量
-            # 或者数字含义不同
-            pass  # 仍然使用原始值，手写可能有误差
 
     # 提取物品名：去除尾部的数字
     name_part = line
@@ -112,15 +110,33 @@ def parse_text_line(line: str) -> Item | None:
     spec, clean_name = extract_spec(name_part)
 
     # 提取单位（如"个"、"只"、"把"等）
-    unit_match = re.search(r'([\u4e00-\u9fff]{1})$', clean_name)
+    # 先尝试匹配末尾双字单位，再尝试单字单位
     unit = '个'  # 默认
-    known_units = {'个', '只', '把', '条', '件', '台', '套', '组', '米', '箱',
-                   '盒', '包', '瓶', '罐', '块', '片', '张', '副', '对', '根',
-                   '支', '卷', '袋', '桶', '升', '吨', '公斤', '千克', '克'}
+    known_units_2 = {'公斤', '千克', '平米', '立方'}
+    known_units_1 = {'个', '只', '把', '条', '件', '台', '套', '组', '米', '箱',
+                     '盒', '包', '瓶', '罐', '块', '片', '张', '副', '对', '根',
+                     '支', '卷', '袋', '桶', '升', '吨', '克', '卷', '批'}
 
-    if unit_match and unit_match.group(1) in known_units:
-        unit = unit_match.group(1)
+    if len(clean_name) >= 2 and clean_name[-2:] in known_units_2:
+        unit = clean_name[-2:]
+        clean_name = clean_name[:-2].strip()
+    elif clean_name and clean_name[-1] in known_units_1:
+        unit = clean_name[-1]
         clean_name = clean_name[:-1].strip()
+
+    # 关键词推断：根据物品名中的产品类型词推断单位
+    _unit_hints = {
+        '线': '米', '电缆': '米', '电线': '米', '导线': '米', '网线': '米',
+        '管': '根', '水管': '根', '线管': '根', '钢管': '根',
+        '灯': '个', '平板灯': '个', '日光灯': '个', '灯泡': '个', '灯管': '个',
+        '开关': '个', '插座': '个', '断路器': '个', '接触器': '个',
+        '螺丝': '包', '钉子': '包', '胶带': '卷',
+    }
+    if unit == '个':
+        for keyword, hint_unit in _unit_hints.items():
+            if keyword in clean_name:
+                unit = hint_unit
+                break
 
     return Item(
         name=clean_name,
@@ -172,7 +188,7 @@ def parse_text_lines(lines: list[str]) -> list[Item]:
 if __name__ == '__main__':
     # 测试用例
     test_lines = [
-        "16A 折産 4 15 60",
+        "16A 插座 4 15 60",
         "公牛有线 14座 4 38 152",
         "2P 324空气开关 3 30 90",
         "30X 60平板灯 2 50 100",

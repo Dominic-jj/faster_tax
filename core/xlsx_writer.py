@@ -9,6 +9,9 @@ import shutil
 import tempfile
 import openpyxl
 
+# 项目根目录
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_DEFAULT_TEMPLATE = os.path.join(_PROJECT_ROOT, 'data', 'invoice_template.xlsx')
 
 # 模板中的列映射（Row 3 表头对应的列字母）
 COLUMN_MAP = {
@@ -30,7 +33,7 @@ TAX_RATE = '0.01'
 
 
 def generate(items: list, output_path: str,
-             template_path: str = 'invoice_template.xlsx') -> str:
+             template_path: str = _DEFAULT_TEMPLATE) -> str:
     """
     生成电子发票 xlsx 文件。
 
@@ -72,7 +75,7 @@ def generate(items: list, output_path: str,
 
 
 def generate_to_bytes(items: list,
-                      template_path: str = 'invoice_template.xlsx') -> bytes:
+                      template_path: str = _DEFAULT_TEMPLATE) -> bytes:
     """
     生成 xlsx 文件并返回字节数据（用于 Streamlit 下载）。
 
@@ -101,7 +104,7 @@ if __name__ == '__main__':
     from parser import Item
 
     test_items = [
-        Item(name='折産', spec='16A', unit='个', quantity=4, unit_price=15, amount=60),
+        Item(name='插座', spec='16A', unit='个', quantity=4, unit_price=15, amount=60),
         Item(name='插座', spec='公牛有线14座', unit='个', quantity=4, unit_price=38, amount=152),
         Item(name='空气开关', spec='2P 324', unit='个', quantity=3, unit_price=30, amount=90),
         Item(name='平板灯', spec='30X60', unit='个', quantity=2, unit_price=50, amount=100),
@@ -109,6 +112,7 @@ if __name__ == '__main__':
         Item(name='时控开关', spec='', unit='个', quantity=1, unit_price=55, amount=55),
     ]
 
-    output = 'output_test.xlsx'
+    output = os.path.join(_PROJECT_ROOT, 'output', 'output_test.xlsx')
+    os.makedirs(os.path.dirname(output), exist_ok=True)
     generate(test_items, output)
     print(f'已生成: {output}')

@@ -1,4 +1,6 @@
 streamlit
 openpyxl
-easyocr
 Pillow
+pandas
+easyocr
+rapidocr_onnxruntime
