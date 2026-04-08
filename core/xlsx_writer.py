@@ -59,7 +59,10 @@ def generate(items: list, output_path: str,
         row = DATA_START_ROW + i
 
         ws[f'A{row}'] = item.name
-        ws[f'B{row}'] = item.tax_code
+        # 编码为纯数字字符串时，设为文本格式防止 Excel 显示科学计数法
+        cell_b = ws[f'B{row}']
+        cell_b.value = str(item.tax_code) if item.tax_code else ''
+        cell_b.number_format = '@'
         ws[f'C{row}'] = item.spec
         ws[f'D{row}'] = item.unit
         ws[f'E{row}'] = item.quantity

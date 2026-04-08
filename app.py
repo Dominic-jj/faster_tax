@@ -307,7 +307,8 @@ with tab2:
             import re as _re
             _known_units = {'个', '只', '把', '条', '件', '台', '套', '组', '米', '箱',
                             '盒', '包', '瓶', '罐', '块', '片', '张', '副', '对', '根',
-                            '支', '卷', '袋', '桶', '升', '吨', '公斤', '千克', '克', '批'}
+                            '支', '卷', '袋', '桶', '升', '吨', '公斤', '千克', '克', '批',
+                            '扎'}
             lines = [l.strip() for l in manual_text.strip().split('\n') if l.strip()]
             manual_items = []
             for line in lines:

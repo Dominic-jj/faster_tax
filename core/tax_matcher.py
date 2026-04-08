@@ -47,8 +47,12 @@ class TaxMatcher:
             desc = row[14] if len(row) > 14 and row[14] else ''  # O列 - 说明
             category = row[13] if len(row) > 13 and row[13] else ''  # N列 - 分类名
 
+            # 大数字编码（18-19位）在 Excel 中以 float 存储，str() 会变成科学计数法
+            if isinstance(code, (int, float)):
+                code = str(int(code))
+
             self.entries.append({
-                'code': str(code),
+                'code': code,
                 'name': str(name),
                 'category': str(category),
                 'desc': str(desc),
@@ -81,6 +85,8 @@ class TaxMatcher:
                 name = row[0]
                 code = row[1]
                 if name and code:
+                    if isinstance(code, (int, float)):
+                        code = str(int(code))
                     self.train_map[str(name).strip()] = str(code).strip()
             wb.close()
 
