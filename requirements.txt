@@ -2,5 +2,4 @@ streamlit
 openpyxl
 Pillow
 pandas
-easyocr
-rapidocr_onnxruntime
+chandra-ocr

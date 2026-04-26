@@ -1,9 +1,12 @@
-"""
-解析模块 - 从 OCR 识别结果中提取结构化物品信息
+"""解析文本行并提取结构化物品信息。
 
-支持两种输入：
-1. OCR 原始结果 list[dict]（含坐标，用于表格定位）
-2. 纯文本行 list[str]
+该模块用于把 OCR 结果或手工整理后的单行文本解析为 ``Item``。
+核心规则如下：
+
+- 支持 ``物品名 数量 单价``，总价缺省时自动按数量乘单价计算。
+- 支持 ``物品名 数量 单价 总价``，总价优先采用输入值。
+- 物品名前缀中的规格型号会被拆分到 ``spec`` 字段。
+- 物品名末尾常见单位会被识别并拆分到 ``unit`` 字段。
 """
 
 import re
@@ -41,10 +44,12 @@ SPEC_PATTERNS = [
 
 def extract_spec(name: str) -> tuple[str, str]:
     """
-    从物品名中提取规格型号前缀。
+    从物品名开头提取规格型号前缀。
 
     Returns:
-        (spec, clean_name) - 规格型号和去除前缀后的名称
+        (spec, clean_name): 规格型号与去除规格后的名称。
+
+    如果前缀不匹配已知规格模式，则返回空规格和原始名称。
     """
     for pattern in SPEC_PATTERNS:
         m = re.match(pattern, name)
@@ -58,9 +63,14 @@ def extract_spec(name: str) -> tuple[str, str]:
 
 def parse_text_line(line: str) -> Item | None:
     """
-    解析单行文本，尝试提取物品信息。
-    行格式通常是：物品名 + 数量 + 单价[ + 总价]
-    如果只提供数量和单价，总价自动计算。
+    解析单行文本并提取物品信息。
+
+    输入行默认采用空格分隔，末尾数字按以下规则解释：
+
+    - 两个数字：依次视为数量、单价，总价自动计算。
+    - 三个及以上数字：最后三个数字依次视为数量、单价、总价。
+
+    其余文本部分会继续拆分规格型号、物品名称和单位。
 
     Examples:
         "插座 4 15"          → 总价自动算 60
@@ -148,34 +158,15 @@ def parse_text_line(line: str) -> Item | None:
     )
 
 
-def parse_ocr_results(results: list[dict]) -> list[Item]:
-    """
-    从 OCR 结果中解析物品列表。
-
-    Args:
-        results: ocr_service.recognize() 返回的结果
-
-    Returns:
-        解析出的 Item 列表
-    """
-    items = []
-    for r in results:
-        text = r.get('text', '')
-        item = parse_text_line(text)
-        if item:
-            items.append(item)
-    return items
-
-
 def parse_text_lines(lines: list[str]) -> list[Item]:
     """
-    从纯文本行列表中解析物品。
+    批量解析多行文本中的物品信息。
 
     Args:
-        lines: 文本行列表
+        lines: 待解析的文本行列表。
 
     Returns:
-        解析出的 Item 列表
+        成功解析出的 ``Item`` 列表；无法解析的行会被跳过。
     """
     items = []
     for line in lines:

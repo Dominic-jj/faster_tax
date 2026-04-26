@@ -1,143 +1,74 @@
 """
-OCR 识别模块 - 支持多引擎切换
+OCR 识别模块 - 基于 Chandra (Qwen3VL 视觉语言模型)
 
-支持引擎：
-  - easyocr     : EasyOCR (默认，支持多语言)
-  - rapidocr    : RapidOCR (轻量快速，基于 ONNX)
-  - paddleocr   : PaddleOCR (中文最佳，需额外安装 paddlepaddle)
+使用本地 GPU + HuggingFace 推理，将发票图片转换为文本行。
 """
 
-# ─── 引擎注册表 ──────────────────────────────────────────
-_ENGINES = {}
+import re
+
+_engine = None
 
 
-def _register_engine(name):
-    """装饰器：注册 OCR 引擎"""
-    def decorator(fn):
-        _ENGINES[name] = fn
-        return fn
-    return decorator
+def get_engine():
+    """懒加载 Chandra InferenceManager（全局单例）"""
+    global _engine
+    if _engine is None:
+        from chandra.model import InferenceManager
+        _engine = InferenceManager(method="hf")
+    return _engine
 
 
-def list_engines() -> list[str]:
-    """返回所有已注册的引擎名"""
-    return list(_ENGINES.keys())
-
-
-def check_engine_available(name: str) -> tuple[bool, str]:
-    """检查引擎是否可用（轻量检测，不实际导入包）"""
-    import importlib.util
-    if name == 'easyocr':
-        found = importlib.util.find_spec('easyocr') is not None
-        return (True, '') if found else (False, 'pip install easyocr')
-    elif name == 'rapidocr':
-        found = importlib.util.find_spec('rapidocr_onnxruntime') is not None
-        return (True, '') if found else (False, 'pip install rapidocr_onnxruntime')
-    elif name == 'paddleocr':
-        found = importlib.util.find_spec('paddleocr') is not None
-        return (True, '') if found else (False, 'pip install paddlepaddle paddleocr')
-    return False, f'未知引擎: {name}'
-
-
-# ─── EasyOCR 引擎 ────────────────────────────────────────
-_easyocr_reader = None
-
-
-@_register_engine('easyocr')
-def _recognize_easyocr(image_path: str) -> list[dict]:
-    global _easyocr_reader
-    if _easyocr_reader is None:
-        import easyocr
-        _easyocr_reader = easyocr.Reader(['ch_sim', 'en'], gpu=False)
-
-    results = _easyocr_reader.readtext(image_path)
-    parsed = []
-    for bbox, text, conf in results:
-        parsed.append({
-            'text': text.strip(),
-            'bbox': bbox,
-            'confidence': round(conf, 4),
-        })
-    parsed.sort(key=lambda r: (r['bbox'][0][1], r['bbox'][0][0]))
-    return parsed
-
-
-# ─── RapidOCR 引擎 ───────────────────────────────────────
-_rapidocr_engine = None
-
-
-@_register_engine('rapidocr')
-def _recognize_rapidocr(image_path: str) -> list[dict]:
-    global _rapidocr_engine
-    if _rapidocr_engine is None:
-        from rapidocr_onnxruntime import RapidOCR
-        _rapidocr_engine = RapidOCR()
-
-    result, _ = _rapidocr_engine(image_path)
-    if not result:
-        return []
-
-    parsed = []
-    for item in result:
-        bbox = item[0]        # [[x1,y1],[x2,y2],[x3,y3],[x4,y4]]
-        text = item[1]        # str
-        conf = item[2]        # float
-        parsed.append({
-            'text': text.strip(),
-            'bbox': bbox,
-            'confidence': round(conf, 4),
-        })
-    parsed.sort(key=lambda r: (r['bbox'][0][1], r['bbox'][0][0]))
-    return parsed
-
-
-# ─── PaddleOCR 引擎 ──────────────────────────────────────
-_paddleocr_engine = None
-
-
-@_register_engine('paddleocr')
-def _recognize_paddleocr(image_path: str) -> list[dict]:
-    global _paddleocr_engine
-    if _paddleocr_engine is None:
-        from paddleocr import PaddleOCR
-        _paddleocr_engine = PaddleOCR(use_angle_cls=True, lang='ch', show_log=False)
-
-    result = _paddleocr_engine.ocr(image_path, cls=True)
-    if not result or not result[0]:
-        return []
-
-    parsed = []
-    for line in result[0]:
-        bbox = line[0]        # [[x1,y1],[x2,y2],[x3,y3],[x4,y4]]
-        text = line[1][0]     # str
-        conf = line[1][1]     # float
-        parsed.append({
-            'text': text.strip(),
-            'bbox': bbox,
-            'confidence': round(conf, 4),
-        })
-    parsed.sort(key=lambda r: (r['bbox'][0][1], r['bbox'][0][0]))
-    return parsed
-
-
-# ─── 公共接口 ────────────────────────────────────────────
-def recognize(image_path: str, engine: str = 'easyocr') -> list[dict]:
+def recognize_texts(image) -> list[str]:
     """
-    使用指定引擎识别图片文字。
+    对 PIL.Image 进行 OCR，返回纯文本行列表。
 
     Args:
-        image_path: 图片路径
-        engine: 引擎名 ('easyocr' | 'rapidocr' | 'paddleocr')
+        image: PIL.Image.Image（RGB）
 
     Returns:
-        [{'text': str, 'bbox': list, 'confidence': float}, ...]
+        识别出的文本行列表，如 ["16A 插座 4 15 60", ...]
     """
-    if engine not in _ENGINES:
-        raise ValueError(f'未知引擎: {engine}，可选: {list_engines()}')
-    return _ENGINES[engine](image_path)
+    from chandra.model.schema import BatchInputItem
+
+    manager = get_engine()
+    batch = BatchInputItem(image=image, prompt_type="ocr")
+    result = manager.generate([batch])[0]
+
+    if result.error:
+        return []
+
+    # 从 markdown 中提取纯文本行
+    lines = _extract_text_lines(result.markdown)
+    return lines
 
 
-def recognize_texts(image_path: str, engine: str = 'easyocr') -> list[str]:
-    """简化接口：只返回识别的文字行列表"""
-    results = recognize(image_path, engine)
-    return [r['text'] for r in results if r['text']]
+def _extract_text_lines(markdown: str) -> list[str]:
+    """
+    从 Chandra 输出的 Markdown 中提取有意义的纯文本行。
+    去除 HTML 标签、表格分隔线、空行等噪声。
+    """
+    # 去除 HTML 标签
+    text = re.sub(r'<[^>]+>', '', markdown)
+
+    # 按行分割并清理
+    lines = []
+    for line in text.split('\n'):
+        line = line.strip()
+        # 跳过空行
+        if not line:
+            continue
+        # 跳过 Markdown 标题标记
+        if line.startswith('#'):
+            continue
+        # 跳过纯分隔线
+        if re.match(r'^[\-\*\_=]{3,}$', line):
+            continue
+        # 跳过 Markdown 表格分隔行 (|---|---|)
+        if re.match(r'^\|[\s\-\:]+\|$', line):
+            continue
+        # 去除行首尾的 | 和多余空白（表格单元格内容）
+        line = line.strip('|').strip()
+        if line:
+            lines.append(line)
+
+    return lines

@@ -4,8 +4,8 @@
 
 | 模块 | 职责 |
 |------|------|
-| `ocr_service.py` | OCR 文字识别（多引擎：EasyOCR / RapidOCR / PaddleOCR） |
-| `parser.py` | 从 OCR 文本行中提取结构化物品数据 |
+| `ocr_service.py` | OCR 文字识别（Chandra / Qwen3VL 视觉语言模型） |
+| `parser.py` | 从文本行中提取结构化物品数据 |
 | `tax_matcher.py` | 物品名 → 税收分类编码的智能匹配 |
 | `xlsx_writer.py` | 按模板生成 xlsx 发票明细文件 |
 

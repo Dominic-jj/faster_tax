@@ -6,10 +6,10 @@
 
 import os
 import sys
-import tempfile
 import streamlit as st
 import pandas as pd
 from datetime import datetime
+from PIL import Image
 
 # 项目根目录 & 核心模块路径
 _PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -21,7 +21,7 @@ from xlsx_writer import generate_to_bytes  # noqa: E402
 
 # ─── 页面配置 ────────────────────────────────────────────
 st.set_page_config(
-    page_title='Invoice OCR',
+    page_title='发票识别转换',
     page_icon='📄',
     layout='wide',
     initial_sidebar_state='collapsed',
@@ -48,20 +48,6 @@ st.markdown("""
 h1 { color: #1e1e2e !important; font-weight: 700 !important; letter-spacing: -0.5px; }
 h2, h3, h4 { color: #2d2d44 !important; }
 p { color: #5c5c7a; }
-
-/* ── Tab ── */
-.stTabs [data-baseweb="tab-list"] {
-    gap: 6px; background: #f1f1f6; border-radius: 12px; padding: 4px;
-    border: 1px solid #e4e4ee;
-}
-.stTabs [data-baseweb="tab"] {
-    color: #7c7c9a; border-radius: 10px; padding: 10px 24px; font-weight: 500;
-    transition: all 0.2s;
-}
-.stTabs [aria-selected="true"] {
-    background: linear-gradient(135deg, #6366f1, #818cf8) !important;
-    color: #fff !important; box-shadow: 0 2px 12px rgba(99,102,241,0.35);
-}
 
 /* ── Primary 按钮（紫色高饱和） ── */
 .stButton > button[kind="primary"] {
@@ -166,17 +152,6 @@ def get_tax_matcher():
     return TaxMatcher()
 
 
-def do_ocr(image_file, engine: str = 'easyocr') -> list[str]:
-    with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as f:
-        f.write(image_file.getvalue())
-        temp_path = f.name
-    try:
-        from ocr_service import recognize_texts
-        return recognize_texts(temp_path, engine=engine)
-    finally:
-        os.unlink(temp_path)
-
-
 # ─── Session State ──────────────────────────────────────
 # NOTE: key name 'invoice_items' avoids conflict with st.session_state.items() method
 def init_state():
@@ -203,67 +178,32 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ═══════════════════════════════════════════════════════════
-#  TABS
+#  IMAGE UPLOAD + OCR
 # ═══════════════════════════════════════════════════════════
-tab1, tab2 = st.tabs(['📷 图片上传识别', '✏️ 手动输入'])
+st.markdown('<div class="section-header"><span class="icon">📷</span><span class="label">图片上传识别</span></div>', unsafe_allow_html=True)
 
-# ===================== Tab1: 图片上传 =====================
-with tab1:
-    # ── OCR 引擎选择器（缓存检测结果） ──
-    col_eng, _ = st.columns([1, 3])
-    with col_eng:
-        from ocr_service import list_engines, check_engine_available
+uploaded_file = st.file_uploader(
+    '拖拽或点击上传发票图片',
+    type=['jpg', 'jpeg', 'png'],
+    key='file_uploader',
+)
 
-        if 'engine_options' not in st.session_state:
-            engine_options = []
-            for eng in list_engines():
-                avail, _ = check_engine_available(eng)
-                if avail:
-                    engine_options.append(eng)
-            st.session_state.engine_options = engine_options
+if uploaded_file is not None:
+    col_img, col_res = st.columns([2, 3])
 
-        engine_options = st.session_state.engine_options
-        engine_labels = {
-            'easyocr': 'EasyOCR（默认）',
-            'rapidocr': 'RapidOCR（轻量快速）',
-            'paddleocr': 'PaddleOCR（中文最佳）',
-        }
+    with col_img:
+        st.markdown('<div class="section-header"><span class="icon">🖼️</span><span class="label">原始图片</span></div>', unsafe_allow_html=True)
+        image = Image.open(uploaded_file).convert("RGB")
+        st.image(image, use_container_width=True)
 
-        if engine_options:
-            display_names = [engine_labels.get(e, e) for e in engine_options]
-            selected_idx = st.selectbox(
-                'OCR 引擎',
-                range(len(display_names)),
-                format_func=lambda i: display_names[i],
-                index=engine_options.index('rapidocr') if 'rapidocr' in engine_options else 0,
-                key='ocr_engine',
-            )
-            selected_engine = engine_options[selected_idx]
-        else:
-            st.error('未检测到可用的 OCR 引擎，请安装依赖')
-            selected_engine = 'easyocr'
+    with col_res:
+        st.markdown('<div class="section-header"><span class="icon">🔍</span><span class="label">OCR 识别结果</span></div>', unsafe_allow_html=True)
 
-    uploaded_file = st.file_uploader(
-        '拖拽或点击上传发票图片',
-        type=['jpg', 'jpeg', 'png'],
-        key='file_uploader',
-    )
+        with st.spinner('正在使用 Chandra 识别中...（首次运行需下载模型，请耐心等待）'):
+            from ocr_service import recognize_texts
+            raw_texts = recognize_texts(image)
 
-    if uploaded_file is not None:
-        col_img, col_res = st.columns([2, 3])
-
-        with col_img:
-            st.markdown('<div class="section-header"><span class="icon">🖼️</span><span class="label">原始图片</span></div>', unsafe_allow_html=True)
-            image = Image.open(uploaded_file)
-            st.image(image, use_container_width=True)
-
-        with col_res:
-            st.markdown('<div class="section-header"><span class="icon">🔍</span><span class="label">OCR 识别结果</span></div>', unsafe_allow_html=True)
-
-            with st.spinner(f'正在使用 {selected_engine} 识别中...（首次运行需下载模型，请耐心等待）'):
-                raw_texts = do_ocr(uploaded_file, engine=selected_engine)
-                st.session_state.ocr_texts = raw_texts
-
+        if raw_texts:
             with st.expander(f'📝 原始文本（{len(raw_texts)} 行）', expanded=True):
                 for i, text in enumerate(raw_texts):
                     st.text(f'[{i}] {text}')
@@ -271,93 +211,99 @@ with tab1:
             parsed = parse_text_lines(raw_texts)
             if parsed:
                 st.session_state.invoice_items = parsed
+                st.success(f'识别成功，共 {len(parsed)} 个物品')
             else:
-                st.warning('未能识别出物品信息。请尝试「手动输入」标签页。')
-
-# ===================== Tab2: 手动输入 =====================
-with tab2:
-    st.markdown('<div class="section-header"><span class="icon">✏️</span><span class="label">手动输入物品信息</span></div>', unsafe_allow_html=True)
-    st.markdown(
-        '<span class="badge badge-slate">格式</span> 每行一个物品，空格分隔：<code style="color:#6366f1">规格 物品名 单位 数量 单价</code>'
-        '&nbsp;&nbsp;<span class="badge badge-amber">提示</span> 总价自动计算 · 无规格填 <code style="color:#d97706">-</code>',
-        unsafe_allow_html=True,
-    )
-
-    manual_text = st.text_area(
-        '物品列表',
-        value='',
-        height=180,
-        placeholder=(
-            '示例（规格 物品名 单位 数量 单价）：\n'
-            '16A 插座 个 4 15\n'
-            '- 公牛有线 14座 组 4 38\n'
-            '2P 空气开关 个 3 30\n'
-            '30X60 平板灯 个 2 50\n'
-            '- 热水器 台 1 37\n'
-            '- 时控开关 个 1 55\n'
-            '- 电线 米 10 5'
-        ),
-        key='manual_input',
-        label_visibility='collapsed',
-    )
-
-    col_parse, _ = st.columns([1, 5])
-    if col_parse.button('✅ 解析文本', use_container_width=True):
-        if manual_text.strip():
-            import re as _re
-            _known_units = {'个', '只', '把', '条', '件', '台', '套', '组', '米', '箱',
-                            '盒', '包', '瓶', '罐', '块', '片', '张', '副', '对', '根',
-                            '支', '卷', '袋', '桶', '升', '吨', '公斤', '千克', '克', '批',
-                            '扎'}
-            lines = [l.strip() for l in manual_text.strip().split('\n') if l.strip()]
-            manual_items = []
-            for line in lines:
-                parts = line.split(None, 1)
-                if len(parts) < 2:
-                    continue
-                spec_raw = parts[0]
-                spec = '' if spec_raw == '-' else spec_raw
-                rest = parts[1]
-
-                # 从 rest 中解析：物品名 单位 数量 单价
-                numbers = _re.findall(r'\d+\.?\d*', rest)
-                if len(numbers) < 2:
-                    continue
-                qty = float(numbers[-2])
-                price = float(numbers[-1])
-
-                # 从末尾去掉最后两个数字
-                text = rest
-                for n in [numbers[-1], numbers[-2]]:
-                    text = _re.sub(r'\s*' + _re.escape(n) + r'\s*$', '', text, count=1)
-                text = text.strip()
-
-                # 提取单位：末尾的已知单位词
-                unit = '个'
-                name = text
-                # 先尝试双字单位
-                if len(text) >= 2 and text[-2:] in _known_units:
-                    unit = text[-2:]
-                    name = text[:-2].strip()
-                elif text and text[-1] in _known_units:
-                    unit = text[-1]
-                    name = text[:-1].strip()
-
-                if not name:
-                    continue
-
-                manual_items.append(Item(
-                    name=name, spec=spec, unit=unit,
-                    quantity=qty, unit_price=price, amount=qty * price,
-                ))
-
-            if manual_items:
-                st.session_state.invoice_items = manual_items
-                st.success(f'解析成功，共 {len(manual_items)} 个物品')
-            else:
-                st.error('无法解析输入内容，请检查格式。')
+                st.warning('未能从 OCR 结果中解析出物品信息。请尝试「手动输入」。')
         else:
-            st.warning('请先输入物品列表。')
+            st.error('OCR 未能识别出任何文字。')
+
+st.divider()
+
+# ═══════════════════════════════════════════════════════════
+#  MANUAL INPUT
+# ═══════════════════════════════════════════════════════════
+st.markdown('<div class="section-header"><span class="icon">✏️</span><span class="label">手动输入物品信息</span></div>', unsafe_allow_html=True)
+st.markdown(
+    '<span class="badge badge-slate">格式</span> 每行一个物品，空格分隔：<code style="color:#6366f1">规格 物品名 单位 数量 单价</code>'
+    '&nbsp;&nbsp;<span class="badge badge-amber">提示</span> 总价自动计算 · 无规格填 <code style="color:#d97706">-</code>',
+    unsafe_allow_html=True,
+)
+
+manual_text = st.text_area(
+    '物品列表',
+    value='',
+    height=180,
+    placeholder=(
+        '示例（规格 物品名 单位 数量 单价）：\n'
+        '16A 插座 个 4 15\n'
+        '- 公牛有线 14座 组 4 38\n'
+        '2P 空气开关 个 3 30\n'
+        '30X60 平板灯 个 2 50\n'
+        '- 热水器 台 1 37\n'
+        '- 时控开关 个 1 55\n'
+        '- 电线 米 10 5'
+    ),
+    key='manual_input',
+    label_visibility='collapsed',
+)
+
+col_parse, _ = st.columns([1, 5])
+if col_parse.button('✅ 解析文本', use_container_width=True):
+    if manual_text.strip():
+        import re as _re
+        _known_units = {'个', '只', '把', '条', '件', '台', '套', '组', '米', '箱',
+                        '盒', '包', '瓶', '罐', '块', '片', '张', '副', '对', '根',
+                        '支', '卷', '袋', '桶', '升', '吨', '公斤', '千克', '克', '批',
+                        '扎'}
+        lines = [l.strip() for l in manual_text.strip().split('\n') if l.strip()]
+        manual_items = []
+        for line in lines:
+            parts = line.split(None, 1)
+            if len(parts) < 2:
+                continue
+            spec_raw = parts[0]
+            spec = '' if spec_raw == '-' else spec_raw
+            rest = parts[1]
+
+            # 从 rest 中解析：物品名 单位 数量 单价
+            numbers = _re.findall(r'\d+\.?\d*', rest)
+            if len(numbers) < 2:
+                continue
+            qty = float(numbers[-2])
+            price = float(numbers[-1])
+
+            # 从末尾去掉最后两个数字
+            text = rest
+            for n in [numbers[-1], numbers[-2]]:
+                text = _re.sub(r'\s*' + _re.escape(n) + r'\s*$', '', text, count=1)
+            text = text.strip()
+
+            # 提取单位：末尾的已知单位词
+            unit = '个'
+            name = text
+            # 先尝试双字单位
+            if len(text) >= 2 and text[-2:] in _known_units:
+                unit = text[-2:]
+                name = text[:-2].strip()
+            elif text and text[-1] in _known_units:
+                unit = text[-1]
+                name = text[:-1].strip()
+
+            if not name:
+                continue
+
+            manual_items.append(Item(
+                name=name, spec=spec, unit=unit,
+                quantity=qty, unit_price=price, amount=qty * price,
+            ))
+
+        if manual_items:
+            st.session_state.invoice_items = manual_items
+            st.success(f'解析成功，共 {len(manual_items)} 个物品')
+        else:
+            st.error('无法解析输入内容，请检查格式。')
+    else:
+        st.warning('请先输入物品列表。')
 
 # ═══════════════════════════════════════════════════════════
 #  EDITOR SECTION
@@ -566,7 +512,7 @@ with st.expander('📖 使用说明'):
     st.markdown("""
     <div style="color:#5c5c7a;font-size:0.9rem;line-height:1.8">
     <b style="color:#2d2d44">操作流程</b><br>
-    <span class="badge badge-purple">1</span> 上传图片或手动输入物品信息<br>
+    <span class="badge badge-purple">1</span> 上传发票图片或手动输入物品信息<br>
     <span class="badge badge-purple">2</span> 在表格中编辑、修正识别结果<br>
     <span class="badge badge-purple">3</span> 点击「生成电子发票 xlsx」<br>
     <span class="badge badge-purple">4</span> 点击「下载」保存文件<br><br>
