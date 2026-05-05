@@ -72,23 +72,57 @@ class TaxMatcher:
             entry['is_leaf'] = is_leaf
 
     def _load_train(self, train_dir: str):
-        """加载训练数据（手动确认过的物品→编码映射），作为优先匹配"""
+        """加载训练数据（手动确认过的物品→编码映射），作为优先匹配。
+
+        同时读取 _ground_truth.json 和目录内所有 xlsx 文件，
+        统一按文件名时间戳升序处理，越新的文件覆盖旧的同名物品映射。
+        直接向目录复制新 xlsx 文件即可自动生效（重启后）。
+        """
         if not os.path.isdir(train_dir):
             return
+
+        import json
         import glob
-        for fpath in sorted(glob.glob(os.path.join(train_dir, '*.xlsx'))):
-            wb = openpyxl.load_workbook(fpath, read_only=True, data_only=True)
-            ws = wb.active
-            for row in ws.iter_rows(min_row=4, max_row=ws.max_row, values_only=True):
-                if len(row) < 2:
-                    continue
-                name = row[0]
-                code = row[1]
-                if name and code:
-                    if isinstance(code, (int, float)):
-                        code = str(int(code))
-                    self.train_map[str(name).strip()] = str(code).strip()
-            wb.close()
+
+        # 收集所有来源：(排序键, 来源类型, 路径/数据)
+        # _ground_truth.json 中每个 key 就是文件名，用文件名作为排序键
+        sources: list[tuple[str, str, object]] = []
+
+        gt_path = os.path.join(train_dir, '_ground_truth.json')
+        if os.path.exists(gt_path):
+            with open(gt_path, 'r', encoding='utf-8') as f:
+                gt = json.load(f)
+            for fname, items in gt.items():
+                sources.append((fname, 'json', items))
+
+        for fpath in glob.glob(os.path.join(train_dir, '*.xlsx')):
+            fname = os.path.basename(fpath)
+            sources.append((fname, 'xlsx', fpath))
+
+        # 按文件名排序（含时间戳，字典序 = 时间顺序），越新越后，后写覆盖前
+        for _, src_type, data in sorted(sources, key=lambda x: x[0]):
+            if src_type == 'json':
+                for item in data:
+                    name = str(item.get('name', '')).strip()
+                    code = str(item.get('tax_code', '')).strip()
+                    if name and code:
+                        self.train_map[name] = code
+            else:
+                try:
+                    wb = openpyxl.load_workbook(data, read_only=True, data_only=True)
+                    ws = wb.active
+                    for row in ws.iter_rows(min_row=4, max_row=ws.max_row, values_only=True):
+                        if len(row) < 2:
+                            continue
+                        name = row[0]
+                        code = row[1]
+                        if name and code:
+                            if isinstance(code, (int, float)):
+                                code = str(int(code))
+                            self.train_map[str(name).strip()] = str(code).strip()
+                    wb.close()
+                except Exception:
+                    pass
 
     def _extract_keywords(self, text: str) -> list[str]:
         """

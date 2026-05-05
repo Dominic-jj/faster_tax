@@ -2,6 +2,15 @@
 
 本文件记录项目的所有重要变更。
 
+## [0.4.1] - 2026-05-05
+
+### Added
+- 新增单位「排」识别（`core/parser.py`）
+
+### Changed
+- `core/tax_matcher.py` — `_load_train()` 重构：同时读取 `_ground_truth.json` 和目录内所有 `*.xlsx`，统一按文件名时间戳升序排序，越新文件越后处理（后写覆盖旧的同名物品映射）
+- 支持直接向 `data/train_data/` 复制新发票 xlsx，重启后自动参与税收编码匹配
+
 ## [0.4.0] - 2026-04-08
 
 ### Added
